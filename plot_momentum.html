@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html>
+<body>
+
+<div class="Bark">
+<input type="file" id="file-input">
+<span>Layer:</span>
+<select id="MySelect">
+</select>
+<span id="resolution-tag"></span>
+<span id="sparseness-tag"></span>
+<span>;  RegrowthRate:</span>
+<input id="regrowth-rate" type="number" step=0.0001 name="Regrowth">
+<span id="stats-tag"></span>
+</div>
+
+<canvas id="myCanvas" width="128" height="128" style="border:2px solid #00ff00;">
+Your browser does not support the HTML5 canvas tag.</canvas>
+
+<h3>Contents of the file:</h3>
+<pre id="file-content"></pre>
+
+<script>
+var canvas = document.getElementById("myCanvas");
+var ctx = canvas.getContext("2d");
+
+var start = null;
+var element = document.getElementById('SomeElementYouWantToAnimate');
+
+//var lines=[];
+var currLine=-1;
+
+//    r = document.getElementById("result");
+// function(e) {}, false);
+
+//var linParams=[];
+//var momParams=[];
+//var linParamsRows=0, linParamsCols=0;
+//var compLin = {};
+//var compMom = {};
+var currComp = {};
+var regrowthRate=0.0;
+
+function startRegrowthUpdate(e) {
+  var rateTxt=document.getElementById("regrowth-rate").value;
+  if(rateTxt.length>0)
+    regrowthRate = parseFloat(rateTxt);
+  if(regrowthRate<=0.0)
+    return;
+
+  var par=currComp.parMom;
+  var max=-1;
+  var totSize = par.rows*par.cols;
+  var tmpParams = new Float32Array(totSize);
+  for(var j=0; j<par.rows; j++)
+    for(var i=0; i<par.cols; i++) {
+      var a = par.params[j][i];
+      tmpParams[j*par.cols+i]= a;
+      if(a>max)  max=a;
+    }
+  tmpParams.sort();
+  var threshIdx = Math.floor(totSize*(1-regrowthRate));
+  var thresh = tmpParams[threshIdx];
+  console.log("threshIdx="+threshIdx+" thresh="+thresh+" max="+max);
+
+  for(var j=0; j<par.rows; j++)
+    for(var i=0; i<par.cols; i++) {
+      if(par.params[j][i]>=thresh) {
+        ctx.fillStyle = "yellow";
+        ctx.fillRect(i*2, j*2, 2, 2);  
+      }
+    }
+}
+
+function highlightGrowing() {
+  ctx.beginPath();  
+  ctx.lineWidth = "4";
+  ctx.globalAlpha = 0.4;        
+  ctx.strokeStyle = "blue";
+
+  var comp=currComp;
+  var par=comp.parLin;
+  var growingCnt=0;
+  var mi=0,mj=0,max=0;
+  var subMats = comp.submatrixCount<=1?1:comp.submatrixCount;
+  var subMatRows = par.rows/subMats;
+  var groupSize = 4*4*subMats;
+
+  for(var j=0; j<subMatRows; j+=4) {
+    for(var i=0; i<par.cols; i+=4) {
+      var zeroCnt=0; var zi=0, zj=0;
+      var gmax=0;
+      for (var js = j; js < par.rows; js+=subMatRows) { //is==i always for subMats=1.
+        for(var jj=0; jj<4; jj++) {
+          for(var ii=0; ii<4; ii++) {
+            var a = Math.abs(par.params[js+jj][i+ii]);
+            if(a==0) { zeroCnt++; zi=i+ii; zj=js+jj; }
+            if(a>gmax) gmax=a;
+          }
+        }
+      }
+      if(zeroCnt!=groupSize && zeroCnt!=0) {
+        if(gmax>max) { max=gmax; mi=i; mj=j;}
+        for (var js = j; js < par.rows; js+=subMatRows)
+          ctx.rect(i*2-2,js*2-2,4*2+4,4*2+4);
+        growingCnt+=(groupSize-zeroCnt);
+      }
+    }
+  }
+  ctx.stroke();
+
+  ctx.beginPath();  
+  ctx.lineWidth = "6";
+  ctx.globalAlpha = 0.5;
+  ctx.strokeStyle = "yellow";
+  for (var mjs = mj; mjs < par.rows; mjs+=subMatRows)
+    ctx.rect(mi*2-4,mjs*2-4,4*2+8,4*2+8);
+  ctx.stroke();
+
+  console.log("growingCnt = "+growingCnt);
+
+  ctx.globalAlpha = 1.0;
+  ctx.lineWidth = "1";
+}
+
+function splitNums(str) {
+  var numsTmp = str.split(' ');
+  var size = 0;
+  for(var col = 0; col < numsTmp.length; col++) 
+    if(numsTmp[col].length>0) 
+      size++;
+  var nums = new Float32Array(size);
+  var i = 0;
+  for(var col = 0; col < numsTmp.length; col++)
+    if(numsTmp[col].length>0)
+      nums[i++]=parseFloat(numsTmp[col]);
+  return nums;
+}
+
+var clog = -Math.log(1.91);
+
+function weightToColor(w) {
+  var color = "green";
+  var w = Math.min(0.99999, Math.abs(w));
+  if(w>0.000000001) {
+    w = Math.min(1.0, clog / Math.log(w));
+    var c1 = Math.max(w-0.5, 0);
+    var c2 = 0.5-Math.abs(0.5-w);
+    var c3 = Math.max(0.5-w,0);
+    var r = 512*(c1+c2);
+    var g = 512*c1;
+    var b = 512*(c1);
+    color = "rgb("+r+","+g+","+b+")";
+  }
+  return color;
+}
+
+function step(timestamp) {
+  var par = currComp.parLin; //parMom; //parLin;
+  if (!start) start = timestamp;
+  var progress = timestamp - start;  
+
+  if(par.rows<=0 || currLine<0) return;
+  if(currLine<1) {
+    ctx.beginPath();
+    ctx.lineWidth = "1";
+    //ctx.strokeStyle = "black";
+    ctx.fillStyle = "black";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);  
+    ctx.stroke();
+  }
+  ctx.beginPath();
+  ctx.lineWidth = "1";
+  ctx.strokeStyle = "red";
+  ctx.fillStyle = "red";
+  var line = currLine;
+  for(; line < par.rows && line < currLine+12; line++){
+    var nums = par.params[line]; //splitNums(lines[line]);  //lines[line].split(' ');
+    for(var col = 0; col < nums.length; col++){
+      var y = line*2;
+      var x = col*2;
+      ctx.fillStyle = weightToColor(nums[col]);
+      //ctx.strokeStyle = color;
+      ctx.fillRect(x, y, 2, 2);  
+    }
+  }
+  currLine=line;
+  ctx.stroke();
+  if(currLine<par.rows)
+    window.requestAnimationFrame(step);
+  else {
+    highlightGrowing();    
+    startRegrowthUpdate();
+  }
+}
+
+
+var fileContents = null;
+var compList = [];
+//var layersList = [];
+//var layersParamsFileStartIdx = [];
+//var momentumParamsFileStartIdx = [];
+
+var layersCnt=0;
+
+function createList() {
+  var select = document.getElementById('MySelect');
+  var optionCounter = 0;
+  var currentGroup = "";
+  select.innerText = null;
+
+  var option = document.createElement("option");
+  option.text = "select layer";
+  option.value = -1;
+  select.appendChild(option);
+  
+  compList.forEach(function (comp) {
+    var option = document.createElement("option");
+    option.text = comp.name;
+    option.value = optionCounter++;
+    select.appendChild(option);
+  });
+}
+
+function parseParams(idxStart) {
+  var par = {};  
+  var contents = fileContents;
+  idxStart = contents.indexOf("[", idxStart+1);
+  idxStart = contents.indexOf("\n", idxStart+1);
+  var idxEnd = contents.indexOf("]", idxStart+1);
+  if(idxStart>=0 && idxEnd>=0) {
+    params = contents.slice(idxStart+1,idxEnd-1);
+    var lines = params.split('\n');
+    par.rows = lines.length;
+    par.params = new Array(par.rows);
+    for(var i=0; i<par.rows; i++) {
+      par.params[i] = splitNums(lines[i]);
+    }
+    par.cols = par.params[0].length;
+  }
+  return par;
+}
+
+function drawLayer(comp) {
+  par = comp.parLin;
+  if(par.rows>0 && par.cols>0 && par.params.length>0) {
+    var h = par.rows;
+    var w = par.cols;
+    console.log("size: rows="+h+" cols="+w);
+    h=h*2; //+2;
+    w=w*2; //+2;
+    canvas.height=h;
+    canvas.width=w;
+    ctx.beginPath();
+    ctx.fillStyle = "black";
+    ctx.fillRect(0, 0, w, h);  
+    ctx.stroke();
+    currLine=0;
+    currComp=comp;
+
+    var element = document.getElementById('resolution-tag');
+    element.textContent = ""+par.rows+"x"+par.cols;
+
+    window.requestAnimationFrame(step);
+  }  
+}
+
+var origW, origX, origY;
+var animationCnt=0, animationLen=25.0;
+function startPointAnimation(x,y) {
+  var line = Math.floor(y/2);
+  var col = Math.floor(x/2);
+  origY=line*2;
+  origX=col*2;
+  var nums = comp.parLin.params[line];
+  origW = nums[col];
+  var element = document.getElementById('stats-tag');
+  element.textContent = "W."+col+"x"+line+"="+origW;
+  //console.log("x: " + x + " y: " + y + " linPar:"+origW);
+  window.requestAnimationFrame(animatePoint);
+}
+
+function animatePoint() {
+  ctx.beginPath();
+  if(animationCnt++<animationLen) {
+    ctx.fillStyle = weightToColor(animationCnt/animationLen);
+    window.requestAnimationFrame(animatePoint);
+  } else {
+    ctx.fillStyle = weightToColor(origW);
+    animationCnt=0;
+  }
+  ctx.fillRect(origX, origY, 2, 2);  
+  ctx.stroke();
+}
+
+function startLayerDrawing(e) {
+  e.preventDefault();
+  e.stopPropagation();
+  var layerNo = e.currentTarget.value;
+  if (layerNo < 0) {
+    canvas.height=128;
+    canvas.width=128;
+  } else {
+    comp = compList[layerNo];
+    comp.parLin = parseParams(comp.linParamsFilePos);
+    comp.parMom = parseParams(comp.momParamsFilePos);
+    drawLayer(comp);
+    console.log("Drawing layer ", comp.name);
+
+    canvas.addEventListener('mousedown', function(e) {
+        var rect = canvas.getBoundingClientRect();
+        var x = event.clientX - Math.round(rect.left+1.5)-2;
+        var y = event.clientY - Math.round(rect.top+2.5)-2;
+        startPointAnimation(x,y);
+    });
+  }
+}
+
+
+
+function readSingleFile(e) {
+  var file = e.target.files[0];
+  if (!file) {
+    return;
+  }
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    var contents = e.target.result;
+    fileContents = contents;
+    console.log("read the file len=", contents.length);
+    //displayContents(contents);
+    var params = "0";
+    var compNameTag = "<ComponentName>";
+    for(var i=0, j=0; j<1000; j++) {
+      var idxStart = contents.indexOf(compNameTag, i);
+      if(idxStart<0) break;
+      i = idxStart+compNameTag.length+1;
+      if(idxStart>=0) {
+        var idxNameEnd = contents.indexOf(" ", i);
+        comp = {};
+        comp.name = contents.slice(i, idxNameEnd);
+        var idxOpenBr = contents.indexOf("<", idxNameEnd);
+        var idxCloseBr = contents.indexOf(">", idxNameEnd);
+        var compType = "";
+        if(idxOpenBr>idxNameEnd && idxCloseBr>idxOpenBr && idxCloseBr-idxOpenBr<70)
+          compType = contents.slice(idxOpenBr+1, idxCloseBr);
+        if(compType.length>0) {
+          var idxStartLin = contents.indexOf("<LinearParams>", i);
+          var idxStartMom = contents.indexOf("<MomentumParams>", i);
+          var idxCompEnd = contents.indexOf("/"+compType, idxCloseBr);
+          if(idxStartLin>=i && idxStartLin < idxCompEnd 
+            //&& idxStartMom>=i && idxStartMom < idxCompEnd
+            ) {
+            comp.linParamsFilePos=idxStartLin;
+            comp.momParamsFilePos=idxStartMom;
+            comp.submatrixCount=1;
+            if(comp.name.indexOf("lstm")>=0) {
+              var submatrixTag = "<SubmatrixCount>";
+              var idxSubmatrix = contents.indexOf(submatrixTag,i);
+              if(idxSubmatrix>0 && idxSubmatrix<idxCompEnd) {
+                var ii = idxSubmatrix+submatrixTag.length+1;
+                var s=contents.slice(ii,ii+2);
+                var c=parseInt(s);
+                if(c>0 && c<10) comp.submatrixCount=c;
+                //var r = /\d+/; s.match(r);
+              }
+            }
+            compList[layersCnt++] = comp;
+          }
+        }
+        var sbtxt = comp.submatrixCount > 1 ? " submatrixCount="+comp.submatrixCount : "";
+        console.log("Component: "+comp.name+" of type: "+compType+sbtxt+" idx:"+i);
+      }
+    }
+    createList();
+  };
+  reader.readAsText(file);
+}
+
+function displayContents(contents) {
+  var element = document.getElementById('file-content');
+  element.textContent = contents;
+}
+
+
+document.getElementById('file-input').addEventListener('change', readSingleFile, false);
+document.getElementById('MySelect').addEventListener('change', startLayerDrawing, false);
+document.getElementById("regrowth-rate").addEventListener('change', startRegrowthUpdate, false);
+
+//console.log(document.getElementById("file input").files); // list of File objects
+
+//var file = document.getElementById("file input").files[0];
+//var reader = new FileReader();
+//content = reader.readAsText(file);
+//console.log(content);
+
+
+</script> 
+
+</body>
+</html>
+
+
