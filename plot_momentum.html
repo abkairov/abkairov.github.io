@@ -9,9 +9,16 @@
 </select>
 <span id="resolution-tag"></span>
 <span id="sparseness-tag"></span>
-<span>;  RegrowthRate:</span>
-<input id="regrowth-rate" type="number" step=0.0001 name="Regrowth">
+<span>.  Matrix Type:</span>
+<select id="MySelectType">
+</select>
+<!--span>;  RegrowthRate:</span>
+<input id="regrowth-rate" type="number" step=0.0001 name="Regrowth" !-->
+</div>
+<div class="Bark2">
+<small>
 <span id="stats-tag"></span>
+</small>
 </div>
 
 <canvas id="myCanvas" width="128" height="128" style="border:2px solid #00ff00;">
@@ -41,14 +48,14 @@ var currLine=-1;
 var currComp = {};
 var regrowthRate=0.0;
 
-function startRegrowthUpdate(e) {
+function startRegrowthUpdate(par) {
   var rateTxt=document.getElementById("regrowth-rate").value;
   if(rateTxt.length>0)
     regrowthRate = parseFloat(rateTxt);
   if(regrowthRate<=0.0)
     return;
 
-  var par=currComp.parMom;
+  //var par=currComp.parMom;
   var max=-1;
   var totSize = par.rows*par.cols;
   var tmpParams = new Float32Array(totSize);
@@ -72,14 +79,14 @@ function startRegrowthUpdate(e) {
     }
 }
 
-function highlightGrowing() {
+function highlightGrowing(comp, par) {
   ctx.beginPath();  
   ctx.lineWidth = "4";
   ctx.globalAlpha = 0.4;        
   ctx.strokeStyle = "blue";
 
-  var comp=currComp;
-  var par=comp.parLin;
+  // var comp=currComp;
+  // var par=comp.parLin;
   var growingCnt=0;
   var mi=0,mj=0,max=0;
   var subMats = comp.submatrixCount<=1?1:comp.submatrixCount;
@@ -139,8 +146,11 @@ function splitNums(str) {
 
 var clog = -Math.log(1.91);
 
-function weightToColor(w) {
+function weightToColor(w, layerType) {
   var color = "green";
+  if(layerType==101) w =w*10000;
+  if(layerType==102) w = w/83;
+
   var w = Math.min(0.99999, Math.abs(w));
   if(w>0.000000001) {
     w = Math.min(1.0, clog / Math.log(w));
@@ -156,7 +166,8 @@ function weightToColor(w) {
 }
 
 function step(timestamp) {
-  var par = currComp.parLin; //parMom; //parLin;
+  //var par = currComp.parLin; //parMom; //parLin;
+  var par = currentPar;
   if (!start) start = timestamp;
   var progress = timestamp - start;  
 
@@ -179,7 +190,7 @@ function step(timestamp) {
     for(var col = 0; col < nums.length; col++){
       var y = line*2;
       var x = col*2;
-      ctx.fillStyle = weightToColor(nums[col]);
+      ctx.fillStyle = weightToColor(nums[col], par.layerType);
       //ctx.strokeStyle = color;
       ctx.fillRect(x, y, 2, 2);  
     }
@@ -189,8 +200,8 @@ function step(timestamp) {
   if(currLine<par.rows)
     window.requestAnimationFrame(step);
   else {
-    highlightGrowing();    
-    startRegrowthUpdate();
+    //highlightGrowing(comp, par);    
+    //startRegrowthUpdate(par);
   }
 }
 
@@ -206,7 +217,6 @@ var layersCnt=0;
 function createList() {
   var select = document.getElementById('MySelect');
   var optionCounter = 0;
-  var currentGroup = "";
   select.innerText = null;
 
   var option = document.createElement("option");
@@ -220,6 +230,23 @@ function createList() {
     option.value = optionCounter++;
     select.appendChild(option);
   });
+
+  select = document.getElementById('MySelectType');
+  select.innerText = null;
+
+  option = document.createElement("option");
+  option.text = "lin.params";
+  option.value = 100;
+  select.appendChild(option);
+  option = document.createElement("option");
+  option.text = "momentum";
+  option.value = 101;
+  select.appendChild(option);
+  option = document.createElement("option");
+  option.text = "mask";
+  option.value = 102;
+  select.appendChild(option);
+
 }
 
 function parseParams(idxStart) {
@@ -241,8 +268,9 @@ function parseParams(idxStart) {
   return par;
 }
 
-function drawLayer(comp) {
-  par = comp.parLin;
+var currentPar;
+
+function drawLayer(comp, par) {
   if(par.rows>0 && par.cols>0 && par.params.length>0) {
     var h = par.rows;
     var w = par.cols;
@@ -261,21 +289,40 @@ function drawLayer(comp) {
     var element = document.getElementById('resolution-tag');
     element.textContent = ""+par.rows+"x"+par.cols;
 
+    currentPar=par; //having some trouble passing it as a parameter, because "step" callback has some timestamp parameter that's critical for progressive animation
     window.requestAnimationFrame(step);
   }  
 }
 
+function getNonZeroGroupsCntForRow(rowParams) {
+  var res=0;
+  for(var i=0; i<rowParams.length; i+=4) {
+    for(var j=0; j<4; j++) {
+      if(Math.abs(rowParams[i+j])>0.0) {
+        res++;
+        break;
+      }
+    }
+  }
+  return res;
+}
+
 var origW, origX, origY;
 var animationCnt=0, animationLen=25.0;
-function startPointAnimation(x,y) {
+function startPointAnimation(x,y, par) {
+  if(animationCnt<animationLen) { //stop previous animation
+    animationCnt=animationLen+1;
+    animatePoint();
+    animationCnt=0;
+  }
   var line = Math.floor(y/2);
   var col = Math.floor(x/2);
   origY=line*2;
   origX=col*2;
-  var nums = comp.parLin.params[line];
+  var nums = par.params[line];
   origW = nums[col];
   var element = document.getElementById('stats-tag');
-  element.textContent = "W."+col+"x"+line+"="+origW;
+  element.textContent = "W."+col+"x"+line+"="+origW+";  non-zero groups in row:"+getNonZeroGroupsCntForRow(nums);
   //console.log("x: " + x + " y: " + y + " linPar:"+origW);
   window.requestAnimationFrame(animatePoint);
 }
@@ -293,26 +340,46 @@ function animatePoint() {
   ctx.stroke();
 }
 
+var prevLayer = 0;
+var prevType = 100;
+
 function startLayerDrawing(e) {
   e.preventDefault();
   e.stopPropagation();
-  var layerNo = e.currentTarget.value;
+  var layerNo = prevLayer;
+  var typeNo = prevType;
+  var optValue = e.currentTarget.value;
+  if(optValue>=100)
+    typeNo = optValue;
+  else
+    layerNo = optValue;
+  prevLayer = layerNo;
+  prevType = typeNo;
+
   if (layerNo < 0) {
     canvas.height=128;
     canvas.width=128;
   } else {
     comp = compList[layerNo];
-    comp.parLin = parseParams(comp.linParamsFilePos);
-    comp.parMom = parseParams(comp.momParamsFilePos);
-    drawLayer(comp);
-    console.log("Drawing layer ", comp.name);
+    var typePos = typeNo==102?comp.mskParamsFilePos:(typeNo==101?comp.momParamsFilePos:comp.linParamsFilePos);
+    if(typePos==0) {
+      canvas.height=128;
+      canvas.width=128;
+    } else {
+      var par = parseParams(typePos);
+      par.layerType = typeNo;
+      // comp.parLin = parseParams(comp.linParamsFilePos);
+      // comp.parMom = parseParams(comp.momParamsFilePos);
+      drawLayer(comp, par);
+      console.log("Drawing layer ", comp.name);
 
-    canvas.addEventListener('mousedown', function(e) {
-        var rect = canvas.getBoundingClientRect();
-        var x = event.clientX - Math.round(rect.left+1.5)-2;
-        var y = event.clientY - Math.round(rect.top+2.5)-2;
-        startPointAnimation(x,y);
-    });
+      canvas.addEventListener('mousedown', function(e) {
+          var rect = canvas.getBoundingClientRect();
+          var x = event.clientX - Math.round(rect.left+1.5)-2;
+          var y = event.clientY - Math.round(rect.top+2.5)-2;
+          startPointAnimation(x,y, par);
+      });
+    }
   }
 }
 
@@ -347,12 +414,12 @@ function readSingleFile(e) {
         if(compType.length>0) {
           var idxStartLin = contents.indexOf("<LinearParams>", i);
           var idxStartMom = contents.indexOf("<MomentumParams>", i);
+          var idxStartMsk = contents.indexOf("<CombinedMask>", i);
           var idxCompEnd = contents.indexOf("/"+compType, idxCloseBr);
-          if(idxStartLin>=i && idxStartLin < idxCompEnd 
-            //&& idxStartMom>=i && idxStartMom < idxCompEnd
-            ) {
+          if(idxStartLin>=i && idxStartLin < idxCompEnd) {
             comp.linParamsFilePos=idxStartLin;
-            comp.momParamsFilePos=idxStartMom;
+            comp.momParamsFilePos=idxStartMom>=i && idxStartMom < idxCompEnd ? idxStartMom : 0;
+            comp.mskParamsFilePos=idxStartMsk>=i && idxStartMsk < idxCompEnd ? idxStartMsk : 0;
             comp.submatrixCount=1;
             if(comp.name.indexOf("lstm")>=0) {
               var submatrixTag = "<SubmatrixCount>";
@@ -369,7 +436,7 @@ function readSingleFile(e) {
           }
         }
         var sbtxt = comp.submatrixCount > 1 ? " submatrixCount="+comp.submatrixCount : "";
-        console.log("Component: "+comp.name+" of type: "+compType+sbtxt+" idx:"+i);
+        console.log("Component: "+comp.name+" of type: "+compType+sbtxt+" idx:"+i+" linP:"+comp.linParamsFilePos+" momP:"+comp.momParamsFilePos+" mskP:"+comp.mskParamsFilePos);
       }
     }
     createList();
@@ -385,7 +452,12 @@ function displayContents(contents) {
 
 document.getElementById('file-input').addEventListener('change', readSingleFile, false);
 document.getElementById('MySelect').addEventListener('change', startLayerDrawing, false);
-document.getElementById("regrowth-rate").addEventListener('change', startRegrowthUpdate, false);
+document.getElementById('MySelectType').addEventListener('change', startLayerDrawing, false);
+//document.getElementById("regrowth-rate").addEventListener('change', startRegrowthUpdate, false);
+
+var element = document.getElementById('stats-tag');
+element.textContent = "Click a weight to get its value";
+
 
 //console.log(document.getElementById("file input").files); // list of File objects
 
